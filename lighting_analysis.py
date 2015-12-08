@@ -2,40 +2,37 @@ import matplotlib.pyplot as plt
 import numpy as np
 import random
 import glob, os
+import time 
 
-'''
-from scipy import ndimage
-a = np.arange(12.).reshape((4, 3))
-print a
-print ndimage.map_coordinates(a, [[0, 0], [4,3]], order=1)
-'''
+popSize = 1000
+tournSize = (popSize)*.15
+numGens = 100
+mutProb = 0.7
+minLamps = 30
+maxLamps = 50
 
-# import required lighting array and lamp array
-requiredLighting = np.genfromtxt('Examples/Test_LightData2.csv', delimiter=',')
+# import required lighting
+requiredLighting = np.genfromtxt('Examples/Test_LightData6.csv', delimiter=',')
 
-# Get folder path containing text files
+# import lamps from local 'Lamps/' directory
 file_list = glob.glob('Lamps/*.csv')
 lamps = []
 for file_path in file_list:
     lamps.append(
         np.genfromtxt(file_path, delimiter=','))
 
-
-#lamp = np.genfromtxt('Lamp/Lamp02.csv', delimiter=',')
-
 # fitness function that compares two arrays and scores with an under- or over-penalty
-def fitness(inputArray,compareArray):
-	totalScore = 0
+def fitness(compareArray):
+	score = 0
 	underPenalty = -0.1
-	overPenalty = -0.001
-	totalScore = 0
-	evalArray = np.subtract(inputArray, compareArray)
+	overPenalty = -0.0001
+	evalArray = np.subtract(requiredLighting, compareArray)
 	for elements in evalArray.flat:
 		if elements < 0:
-			totalScore += abs(elements)*underPenalty
+			score += abs(elements)*underPenalty
 		if elements > 0:
-			totalScore += abs(elements)*overPenalty
-	return totalScore
+			score += abs(elements)*overPenalty
+	return score
 
 # function to add sub-array (mat2) at a specific location (xycoor) in main array (mat1)
 def addAtPos(mat1, mat2, xycoor):
@@ -52,30 +49,84 @@ def plotHeatmap(array):
 	plt.colorbar(im, orientation='horizontal').set_label('Footcandles (fc)')
 	plt.show()
 
+def placeLamp():
+	lampType = random.randint(0,len(lamps)-1)
+	xmin = 0
+	xmax = requiredLighting.shape[1] - lamps[lampType].shape[0]
+	ymin = 0
+	ymax = requiredLighting.shape[0] - lamps[lampType].shape[1]
+	xrand = random.randint(xmin, xmax)
+	yrand = random.randint(ymin, ymax)
+	return [xrand,yrand,lampType]
 
-if __name__ == '__main__':
-	# very basic randomized optimization (that's not working well)
-	for individual in range(0,100000):
+def initFirstGen():
+	population = []
+	for n in range(0,popSize):
+		individual = []
+		totalLamps = random.randint(minLamps, maxLamps)
+		for i in range(0,totalLamps):
+			individual.append(placeLamp())
+		population.append(individual)
+	return population
+
+def mutate(individual):
+	individual[random.randint(0,len(individual)-1)] = placeLamp()
+	return individual
+
+def crossover(mom,dad):
+	mommy = len(mom)
+	daddy = len(dad)
+	if mommy<daddy:
+		reunion = random.randint(0,mommy)
+		kid = mom[0:reunion]+dad[reunion:daddy+1]
+	else:
+		reunion = random.randint(0,daddy)
+		kid = dad[0:reunion]+mom[reunion:mommy+1]
+	return kid
+
+def sortGen(generation):
+	genScores = []
+	for n in range(0,popSize):
 		achievedLighting = np.zeros((requiredLighting.shape[0],requiredLighting.shape[1]))
-		totalLamps = random.randint(10, 30)
-		for x in range(0,totalLamps):
-			lampType = random.randint(0,len(lamps)-1)
-			# design boundaries for lamp placement
-			xmin = 0
-			xmax = requiredLighting.shape[1] - lamps[lampType].shape[0]
-			ymin = 0
-			ymax = requiredLighting.shape[0] - lamps[lampType].shape[1]
-			xrand = random.randint(xmin, xmax)
-			yrand = random.randint(ymin, ymax)
-			addAtPos(achievedLighting,lamps[lampType],(yrand,xrand))
-		if individual==0:
-			highScore = fitness(requiredLighting,achievedLighting)
-			bestOf = achievedLighting
-			first=0
-		if fitness(requiredLighting,achievedLighting) > highScore:
-			bestOf = achievedLighting
-			highScore = fitness(requiredLighting,achievedLighting)
-			print highScore
+		indSize = len(generation[n])
+		for k in range(0,indSize):
+			addAtPos(achievedLighting,lamps[generation[n][k][2]],(generation[n][k][1],generation[n][k][0]))
+		genScores.append(fitness(achievedLighting))	
+	genScores, generation = zip(*sorted(zip(genScores, generation),reverse = True))
+	return generation, genScores[0]
+
+def nextGen(currentGen):
+	newGen = []
+	for n in range(0,popSize):
+		if n < tournSize:
+			newGen.append(currentGen[n])
+		else:
+			if random.random() < mutProb:
+				child = mutate(crossover(currentGen[random.randint(0,popSize-1)],currentGen[random.randint(0,popSize-1)]))
+				newGen.append(child)
+			else:
+				child = crossover(currentGen[random.randint(0,popSize-1)],currentGen[random.randint(0,popSize-1)])
+				newGen.append(child)
+	return newGen
 		
-	plotHeatmap(bestOf)
-	#plotHeatmap(requiredLighting)
+def childToLightingArray(child):
+		solution = np.zeros((requiredLighting.shape[0],requiredLighting.shape[1]))
+		indSize = len(child)
+		for k in range(0,indSize):
+			addAtPos(solution,lamps[child[k][2]],(child[k][1],child[k][0]))
+		return solution
+		
+if __name__ == '__main__':
+	start_time = time.time()	
+	generation = initFirstGen()
+	for gen in range(0,numGens):
+		generation, highscore = sortGen(generation)
+		generation = nextGen(generation)
+		print("Generation: %s \t Top Score: %s" % (gen+1,highscore))
+	
+	print("--- %s seconds ---" % (time.time() - start_time))
+	print generation[0]
+	plotHeatmap(requiredLighting)
+	plotHeatmap(childToLightingArray(generation[0]))
+
+	
